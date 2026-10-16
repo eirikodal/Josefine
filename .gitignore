@@ -1,0 +1,15 @@
+# Miljø og hemmeligheter
+.env
+.env.local
+
+# Logger
+*.log
+
+# Bygg og avhengigheter
+node_modules/
+__pycache__/
+*.pyc
+
+# Systemfiler
+.DS_Store
+*~

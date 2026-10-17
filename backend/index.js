@@ -88,6 +88,10 @@ async function main() {
   let activeToolCalls = 0;
   /** @type {ReturnType<typeof setTimeout> | null} */
   let conversationIdleTimer = null;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let reconnectTimer = null;
+  let isConnectingGemini = false;
+  let isShuttingDown = false;
   let echoGuardUntil = 0;
 
   let recordedBytes = 0;
@@ -174,7 +178,12 @@ async function main() {
     }
   }
 
-  function startConversation() {
+  async function startConversation() {
+    if (!gemini.isReady) {
+      emitIpc({ type: "status", message: "Kobler til Josefine..." });
+      const ok = await connectOrReconnectGemini();
+      if (!ok) return;
+    }
     conversationActive = true;
     awaitingModelTurnComplete = false;
     player.stop();
@@ -215,8 +224,31 @@ async function main() {
     }
   }
 
+  /**
+   * @param {number} [delayMs=3000]
+   */
+  function scheduleReconnect(delayMs = 3000) {
+    if (isShuttingDown || !apiKey) return;
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      if (!gemini.isReady && !isConnectingGemini) {
+        connectOrReconnectGemini().catch(() => {});
+      }
+    }, delayMs);
+    if (typeof reconnectTimer.unref === "function") {
+      reconnectTimer.unref();
+    }
+  }
+
   async function connectOrReconnectGemini() {
-    if (!apiKey) return;
+    if (!apiKey) return false;
+    if (isConnectingGemini) return false;
+    isConnectingGemini = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     gemini.close();
     gemini.systemInstruction = await buildJosefineSystemPrompt(HOME_DIR);
     try {
@@ -225,14 +257,21 @@ async function main() {
       debug("Tilkoblet Gemini Live ok.");
       emitIpc({ type: "status", message: "Josefine er tilkoblet og klar!" });
       emitIpc({ type: "ready" });
-      setState("idle");
+      if (!conversationActive) {
+        setState("idle");
+      }
+      return true;
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       debug(`Tilkoblingsfeil: ${errMsg}`);
       emitIpc({
         type: "status",
-        message: `Tilkoblingsfeil: ${errMsg}`,
+        message: "Venter på nettverk, kobler til Josefine...",
       });
+      scheduleReconnect(3000);
+      return false;
+    } finally {
+      isConnectingGemini = false;
     }
   }
 
@@ -425,10 +464,13 @@ async function main() {
   gemini.on("close", (code, reason) => {
     debug(`Gemini lukket: code=${code}, reason=${reason}`);
     endConversationToIdle();
-    emitIpc({
-      type: "status",
-      message: `Gemini-tilkoblingen ble lukket (${code}). Start Josefine på nytt.`,
-    });
+    if (!isShuttingDown && !isConnectingGemini) {
+      emitIpc({
+        type: "status",
+        message: "Kobler til Josefine på nytt...",
+      });
+      scheduleReconnect(1500);
+    }
   });
 
   // 3. Sjekk om barnets profil er satt opp i ~/JosefineHome, og koble til Gemini Live
@@ -519,6 +561,7 @@ async function main() {
 
   // Rydd opp ved avslutning
   process.on("SIGTERM", () => {
+    isShuttingDown = true;
     debug("SIGTERM mottatt, avslutter.");
     nightSchedule.stop();
     reflection.stop();
@@ -527,6 +570,7 @@ async function main() {
     process.exit(0);
   });
   process.on("SIGINT", () => {
+    isShuttingDown = true;
     debug("SIGINT mottatt, avslutter.");
     nightSchedule.stop();
     reflection.stop();

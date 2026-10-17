@@ -26,6 +26,21 @@ if ! command -v quickshell &>/dev/null; then
     exit 1
 fi
 
+# Sørg for at PipeWire, PulseAudio-socket og WirePlumber kjører via systemd --user
+if command -v systemctl &>/dev/null; then
+    systemctl --user reset-failed pipewire.socket pipewire.service pipewire-pulse.socket pipewire-pulse.service wireplumber.service 2>/dev/null || true
+    systemctl --user start pipewire.socket pipewire-pulse.socket wireplumber.service 2>/dev/null || true
+fi
+
+# På Raspberry Pi 5 starter HDMI-lydkortene (vc4-hdmi-0 / vc4-hdmi-1) ofte med profil 'off'.
+# Aktiver dem automatisk hvis vi kun har auto_null (Dummy Output) som sink.
+if command -v pactl &>/dev/null; then
+    if ! pactl list short sinks 2>/dev/null | grep -vq "auto_null"; then
+        pactl set-card-profile alsa_card.platform-107c701400.hdmi pro-audio 2>/dev/null || true
+        pactl set-card-profile alsa_card.platform-107c706400.hdmi pro-audio 2>/dev/null || true
+    fi
+fi
+
 export JOSEFINE_ROOT="$REPO_DIR"
 
 echo "✨ Starter Josefine Quickshell UI..."

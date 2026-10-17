@@ -7,7 +7,6 @@ import {
   SessionManager,
   SettingsManager,
   DefaultResourceLoader,
-  createCodingTools,
 } from "@earendil-works/pi-coding-agent";
 import { computeChildInfo, getJosefineHomeDir, loadChildProfile } from "./homeManager.js";
 
@@ -61,20 +60,20 @@ export async function runJosefineWorkerTask(options) {
   const ageDesc = childInfo?.age != null ? ` (${childInfo.age} år)` : "";
 
   const agentDir = path.join(os.homedir(), ".pi", "agent");
-  const modelRuntime = ModelRuntime.create({
+  const modelRuntime = await ModelRuntime.create({
     authPath: path.join(agentDir, "auth.json"),
     modelsPath: path.join(agentDir, "models.json"),
   });
 
   const googleKey = apiKey || process.env.GEMINI_API_KEY || "";
   if (googleKey) {
-    modelRuntime.authStorage.setRuntimeApiKey("google", googleKey);
+    await modelRuntime.setRuntimeApiKey("google", googleKey);
   }
 
   // Velg rask arbeidsmodell (gemini-3.8-flash fra lokal models.json, eller registrer direkte)
   let model =
-    modelRuntime.find("google", "gemini-3.8-flash") ||
-    modelRuntime.find("google", "gemini-2.5-flash");
+    modelRuntime.getModel("google", "gemini-3.8-flash") ||
+    modelRuntime.getModel("google", "gemini-2.5-flash");
 
   if (!model) {
     modelRuntime.registerProvider("google", {
@@ -93,7 +92,7 @@ export async function runJosefineWorkerTask(options) {
         },
       ],
     });
-    model = modelRuntime.find("google", "gemini-3.8-flash");
+    model = modelRuntime.getModel("google", "gemini-3.8-flash");
   }
 
   const settingsManager = SettingsManager.create(workDir, agentDir);
@@ -118,7 +117,6 @@ export async function runJosefineWorkerTask(options) {
     agentDir,
     model,
     thinkingLevel: "low",
-    tools: createCodingTools(workDir),
     modelRuntime,
     sessionManager: SessionManager.inMemory(workDir),
     settingsManager,

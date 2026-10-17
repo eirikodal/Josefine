@@ -8,7 +8,7 @@ description: Søker opp og viser barnevennlige bilder, dyr, dinosaurer, verdensr
 Brukes når barnet vil se bilder av noe (f.eks. dyr, dinosaurer, prinsesser, planeter, biler eller tegninger) på venstresiden av skjermen (1130×720).
 
 ## Fremgangsmåte
-1. For å vise flotte bilder raskt og barnevennlig på skjermen til venstre, bruk hjelpeskriptet `./scripts/open-app.sh` (hvis det kjører i dev-modus) eller åpne Chromium i app-modus med Google Bildesøk og SafeSearch påslått (`safe=active`):
+1. Kjør `./scripts/open-window.sh` direkte med Google Bildesøk og SafeSearch påslått (`safe=active`). Skriptet åpner Chromium i ren web-app-modus og lukker eventuelle cookie-bannere automatisk:
    ```bash
    ./scripts/open-window.sh "https://www.google.com/search?tbm=isch&safe=active&q=<søkeord>"
    ```

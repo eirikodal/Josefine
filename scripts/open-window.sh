@@ -2,7 +2,7 @@
 # ==============================================================================
 # Josefine: Åpner en URL eller lokal HTML-fil på venstre skjermflate i Hyprland.
 # Bruker alltid Chromium i ren web-app-modus (--app=<url>) uten meny/adressefelt
-# og med CDP på :9222 slik at browser-tools kan styre vinduet!
+# og lukker automatisk eventuelle cookie-bannere!
 # ==============================================================================
 set -euo pipefail
 
@@ -21,5 +21,8 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# Bruk browser-nav.js (som enten navigerer eksisterende --app-vindu eller starter et nytt i --app-modus)
-exec node "${REPO_DIR}/Skills/browser-tools/browser-nav.js" "$TARGET"
+node "${REPO_DIR}/Skills/browser-tools/browser-nav.js" "$TARGET"
+
+if [[ "$TARGET" =~ ^https?:// ]]; then
+    node "${REPO_DIR}/Skills/browser-tools/browser-dismiss-cookies.js" >/dev/null 2>&1 || true
+fi

@@ -39,6 +39,7 @@ spawn(
   [
     "--remote-debugging-port=9222",
     `--user-data-dir=${userDataDir}`,
+    ...(process.env.WAYLAND_DISPLAY ? ["--ozone-platform=wayland"] : []),
     "--ozone-platform-hint=auto",
     "--no-first-run",
     "--no-default-browser-check",

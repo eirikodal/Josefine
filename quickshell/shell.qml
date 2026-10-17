@@ -11,8 +11,8 @@ import "josefineLogic.js" as Logic
 PanelWindow {
     id: root
 
-    // Knytt til aktiv skjerm (DSI-1 / HDMI-A-1 på Pi, eller primærskjerm)
-    screen: Quickshell.screens[0]
+    // Knytt til aktiv skjerm (velg alltid første ekte skjerm så HDMI-hotplug ikke skjuler panelet)
+    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
 
     // Lås Josefine eksklusivt til høyre side av 1520x720 skjermen
     anchors {

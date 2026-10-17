@@ -33,12 +33,20 @@ if command -v systemctl &>/dev/null; then
 fi
 
 # På Raspberry Pi 5 starter HDMI-lydkortene (vc4-hdmi-0 / vc4-hdmi-1) ofte med profil 'off'.
-# Aktiver dem automatisk hvis vi kun har auto_null (Dummy Output) som sink.
+# Vent på WirePlumber og aktiver dem automatisk hvis vi kun har auto_null (Dummy Output) som sink.
 if command -v pactl &>/dev/null; then
-    if ! pactl list short sinks 2>/dev/null | grep -vq "auto_null"; then
-        pactl set-card-profile alsa_card.platform-107c701400.hdmi pro-audio 2>/dev/null || true
-        pactl set-card-profile alsa_card.platform-107c706400.hdmi pro-audio 2>/dev/null || true
-    fi
+    (
+        for _ in 1 2 3 4 5; do
+            if pactl list short cards 2>/dev/null | grep -q "hdmi"; then
+                if ! pactl list short sinks 2>/dev/null | grep -vq "auto_null"; then
+                    pactl set-card-profile alsa_card.platform-107c701400.hdmi pro-audio 2>/dev/null || true
+                    pactl set-card-profile alsa_card.platform-107c706400.hdmi pro-audio 2>/dev/null || true
+                fi
+                break
+            fi
+            sleep 1
+        done
+    ) &
 fi
 
 export JOSEFINE_ROOT="$REPO_DIR"

@@ -170,5 +170,16 @@ export async function buildJosefineSystemPrompt(homeDir = getJosefineHomeDir(), 
     );
   }
 
+  // 5. Faste regler for samtaleavslutning og samspill med Arbeidsmauren
+  parts.push(
+    [
+      "## Samtale- og verktøyregler",
+      "- **Avslutte samtalen (`end_conversation`):** Når barnet eller en voksen sier «Ha det», «Takk, det var alt», «Vi har ikke noe mer nå», «Snakkes senere» eller tydelig er ferdig med å prate, skal du si en kort, koselig avskjed og kalle `end_conversation` slik at mikrofonen skrus av.",
+      "- **Flere oppgaver og innspill mens Arbeidsmauren jobber:**",
+      "  - Hvis barnet vil endre eller legge til noe på oppgaven Arbeidsmauren *allerede* holder på med (f.eks. «Ta med en mops også!» eller «Gjør fargene rosa!»), kall `steer_task` for å sende ønsket direkte til den pågående oppgaven.",
+      "  - Hvis barnet ber om en *ny, uavhengig* oppgave mens Arbeidsmauren jobber (f.eks. sette på musikk mens en nettside lages), kall `delegate_task` – Arbeidsmauren kan kjøre flere oppgaver i bakgrunnen samtidig!",
+    ].join("\n"),
+  );
+
   return parts.join("\n\n");
 }

@@ -9,6 +9,7 @@ Item {
     property int pulseSpeedMs: 2800
     property bool isListening: false
     property bool isSpeaking: false
+    property bool isWorking: false
 
     implicitWidth: 330
     implicitHeight: 330
@@ -252,12 +253,21 @@ Item {
                 }
             }
 
-            // Subtil glitre-animasjon
+            // Subtil glitre-animasjon (raskere når Arbeidsmauren jobber)
             SequentialAnimation on scale {
                 loops: Animation.Infinite
                 running: true
-                NumberAnimation { from: 0.92; to: 1.12; duration: 1500; easing.type: Easing.InOutQuad }
-                NumberAnimation { from: 1.12; to: 0.92; duration: 1500; easing.type: Easing.InOutQuad }
+                NumberAnimation { from: 0.90; to: root.isWorking ? 1.24 : 1.12; duration: root.isWorking ? 650 : 1500; easing.type: Easing.InOutQuad }
+                NumberAnimation { from: root.isWorking ? 1.24 : 1.12; to: 0.90; duration: root.isWorking ? 650 : 1500; easing.type: Easing.InOutQuad }
+            }
+
+            // Myk rotasjon når Arbeidsmauren jobber i bakgrunnen
+            NumberAnimation on rotation {
+                running: root.isWorking
+                from: 0
+                to: 360
+                duration: 3200
+                loops: Animation.Infinite
             }
         }
     }

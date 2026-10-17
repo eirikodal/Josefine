@@ -41,7 +41,21 @@ PanelWindow {
     // Tilstandsstyring og dynamiske meldinger
     property string assistantState: "idle"
     property string dynamicStatusText: ""
+    property bool workerActive: false
+    property int workerTaskCount: 0
     property var stateConfig: Logic.getConfigForState(assistantState)
+
+    // La siste tekst bli stående i 10 sekunder etter at samtalen er avsluttet
+    Timer {
+        id: idleTextClearTimer
+        interval: 10000
+        repeat: false
+        onTriggered: {
+            if (root.assistantState === "idle") {
+                root.dynamicStatusText = "";
+            }
+        }
+    }
 
     // ==========================================
     // MPRIS Musikk-styring & Auto-pause ved tale
@@ -123,12 +137,25 @@ PanelWindow {
                     if (msg.type === "state" && msg.state) {
                         root.assistantState = msg.state;
                         if (msg.state === "idle") {
-                            root.dynamicStatusText = "";
+                            if (root.dynamicStatusText !== "") {
+                                idleTextClearTimer.restart();
+                            }
+                        } else {
+                            idleTextClearTimer.stop();
                         }
                     } else if (msg.type === "status" && msg.message) {
                         root.dynamicStatusText = msg.message;
+                        if (root.assistantState === "idle") {
+                            idleTextClearTimer.restart();
+                        }
                     } else if (msg.type === "transcript" && msg.text) {
                         root.dynamicStatusText = msg.text;
+                        if (root.assistantState === "idle") {
+                            idleTextClearTimer.restart();
+                        }
+                    } else if (msg.type === "worker") {
+                        root.workerActive = !!msg.active;
+                        root.workerTaskCount = msg.count || 0;
                     } else if (msg.type === "profile") {
                         root.userName = msg.name || "";
                     } else if (msg.type === "onboarding_required") {
@@ -226,6 +253,66 @@ PanelWindow {
                 font.pixelSize: 16
                 wrapMode: Text.WordWrap
                 lineHeight: 1.35
+            }
+
+            // Diskré "Jobber i bakgrunnen"-indikator med animerte prikker når Arbeidsmauren jobber
+            Rectangle {
+                Layout.topMargin: 12
+                visible: root.workerActive && !root.onboardingRequired
+                height: 32
+                implicitWidth: workerRow.implicitWidth + 24
+                radius: 16
+                color: "#EFE7FA"
+                border.color: "#DECFF5"
+                border.width: 1
+
+                RowLayout {
+                    id: workerRow
+                    anchors.centerIn: parent
+                    spacing: 8
+
+                    Row {
+                        spacing: 4
+                        Layout.alignment: Qt.AlignVCenter
+
+                        Repeater {
+                            model: 3
+                            Rectangle {
+                                id: dot
+                                required property int index
+                                width: 6
+                                height: 6
+                                radius: 3
+                                color: "#8E5BE8"
+
+                                SequentialAnimation on opacity {
+                                    loops: Animation.Infinite
+                                    running: root.workerActive
+                                    PauseAnimation { duration: dot.index * 160 }
+                                    NumberAnimation { from: 0.35; to: 1.0; duration: 360; easing.type: Easing.InOutQuad }
+                                    NumberAnimation { from: 1.0; to: 0.35; duration: 360; easing.type: Easing.InOutQuad }
+                                }
+
+                                SequentialAnimation on scale {
+                                    loops: Animation.Infinite
+                                    running: root.workerActive
+                                    PauseAnimation { duration: dot.index * 160 }
+                                    NumberAnimation { from: 0.85; to: 1.25; duration: 360; easing.type: Easing.InOutQuad }
+                                    NumberAnimation { from: 1.25; to: 0.85; duration: 360; easing.type: Easing.InOutQuad }
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: root.workerTaskCount > 1
+                            ? ("Jobber i bakgrunnen (" + root.workerTaskCount + ")")
+                            : "Jobber i bakgrunnen"
+                        color: "#573B8A"
+                        font.pixelSize: 13
+                        font.weight: Font.DemiBold
+                    }
+                }
             }
 
             // ==========================================
@@ -459,6 +546,7 @@ PanelWindow {
                 pulseSpeedMs: root.stateConfig.auraPulseSpeedMs
                 isListening: root.stateConfig.isMicActive
                 isSpeaking: root.assistantState === "speaking"
+                isWorking: root.workerActive
             }
 
             // Pilleformet mikrofonknapp & hjelpetekst

@@ -12,15 +12,17 @@ const execFileAsync = promisify(execFile);
  * @fileoverview Verktøy-dispatcher for Josefine (Front-agenten i Gemini Live).
  * Josefine har en lett og rask front-rolle, og delegerer skjerm-, nettleser-,
  * musikk- og tavle-oppgaver til Arbeidsmauren (Pi SDK Worker) i bakgrunnen.
+ * Støtter både flere parallelle bakgrunnsoppgaver og direkte styring (steer_task)
+ * av pågående oppgaver mens barnet prater!
  */
 
 export const JOSEFINE_TOOLS = [
   {
     name: "delegate_task",
     description:
-      "Delegerer en oppgave til Arbeidsmauren (din autonome bakgrunnsagent som styrer venstresiden av skjermen). " +
-      "Brukes når barnet vil se bilder (f.eks. dinosaur, kattunge), høre musikk/se video, eller få laget en magisk interaktiv tavle/spill/tegning på skjermen. " +
-      "Returnerer umiddelbart slik at du kan fortsette å prate mens Arbeidsmauren jobber!",
+      "Delegerer en ny oppgave til Arbeidsmauren (din autonome bakgrunnsagent som styrer venstresiden av skjermen, musikk og innstillinger). " +
+      "Du kan gjerne starte flere oppgaver i bakgrunnen samtidig! " +
+      "Returnerer umiddelbart slik at du kan fortsette å prate mens Arbeidsmauren jobber.",
     parameters: {
       type: "OBJECT",
       properties: {
@@ -39,15 +41,35 @@ export const JOSEFINE_TOOLS = [
     },
   },
   {
+    name: "steer_task",
+    description:
+      "Sender en tilleggsbeskjed eller endring direkte til en oppgave Arbeidsmauren allerede holder på med akkurat nå " +
+      "(f.eks. hvis barnet sier 'Ta med en mops også!' eller 'Gjør bakgrunnen rosa!' mens Arbeidsmauren lager en nettside).",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        instruction: {
+          type: "STRING",
+          description: "Hva Arbeidsmauren skal endre eller legge til i oppgaven den jobber med nå.",
+        },
+        task_id: {
+          type: "STRING",
+          description: "Valgfri oppgave-ID (hvis utelatt, styres den nyeste aktive oppgaven).",
+        },
+      },
+      required: ["instruction"],
+    },
+  },
+  {
     name: "get_task_status",
     description:
-      "Sjekker status og hva Arbeidsmauren gjør akkurat nå. Bruk dette hvis barnet spør 'Kommer det snart?' eller 'Hva gjør Arbeidsmauren nå?'.",
+      "Sjekker status på alle aktive og nylige oppgaver hos Arbeidsmauren. Bruk dette hvis barnet spør 'Kommer det snart?' eller 'Hva gjør Arbeidsmauren nå?'.",
     parameters: {
       type: "OBJECT",
       properties: {
         task_id: {
           type: "STRING",
-          description: "Valgfri oppgave-ID. Hvis utelatt, vises siste/aktive oppgave.",
+          description: "Valgfri oppgave-ID. Hvis utelatt, vises alle aktive og nylige oppgaver.",
         },
       },
     },
@@ -61,7 +83,7 @@ export const JOSEFINE_TOOLS = [
       properties: {
         task_id: {
           type: "STRING",
-          description: "Valgfri oppgave-ID som skal avbrytes (avbryter aktiv oppgave hvis utelatt).",
+          description: "Valgfri oppgave-ID som skal avbrytes (avbryter siste aktive oppgave hvis utelatt).",
         },
       },
     },
@@ -70,6 +92,15 @@ export const JOSEFINE_TOOLS = [
     name: "close_apps",
     description:
       "Lukker åpne vinduer på venstresiden av skjermen når barnet er ferdig med å se på bilder, tavle eller video.",
+    parameters: {
+      type: "OBJECT",
+      properties: {},
+    },
+  },
+  {
+    name: "end_conversation",
+    description:
+      "Avslutter samtalen og skrur av mikrofonen når barnet eller en voksen sier 'Ha det', 'Takk, det var alt', 'Vi har ikke noe mer nå', 'Snakkes senere' eller tydelig ønsker å avslutte samtalen. Si en kort, varm avskjed samtidig som du kaller dette verktøyet.",
     parameters: {
       type: "OBJECT",
       properties: {},
@@ -88,6 +119,8 @@ export const JOSEFINE_TOOLS = [
  * @param {typeof runJosefineWorkerTask} [options.workerRunner] - Valgfri worker-runner (for testing)
  * @param {(record: import("./taskStore.js").TaskRecord) => void} [options.onTaskCompleted] - Kalles når en bakgrunnsoppgave er ferdig
  * @param {(taskId: string, step: string) => void} [options.onProgress] - Kalles ved fremdrift hos Arbeidsmauren
+ * @param {(activeCount: number) => void} [options.onActiveCountChange] - Kalles når antall aktive bakgrunnsoppgaver endres
+ * @param {() => void} [options.onEndConversation] - Kalles når Josefine bruker end_conversation-verktøyet
  */
 export function createAgentDispatcher(options) {
   const {
@@ -98,11 +131,21 @@ export function createAgentDispatcher(options) {
     workerRunner = runJosefineWorkerTask,
     onTaskCompleted,
     onProgress,
+    onActiveCountChange,
+    onEndConversation,
   } = options;
 
   const scriptsDir = path.join(repoDir, "scripts");
   /** @type {Map<string, AbortController>} */
   const activeControllers = new Map();
+  /** @type {Map<string, { steer: (text: string) => Promise<any> }>} */
+  const activeSessions = new Map();
+
+  function notifyActiveCount() {
+    if (onActiveCountChange) {
+      onActiveCountChange(activeControllers.size);
+    }
+  }
 
   /**
    * Kjører et verktøykall fra Gemini Live og returnerer svaret umiddelbart.
@@ -126,13 +169,14 @@ export function createAgentDispatcher(options) {
 
           const controller = new AbortController();
           activeControllers.set(record.id, controller);
+          notifyActiveCount();
 
           // Start Arbeidsmauren asynkront i bakgrunnen med homeDir som arbeidsmappe
           (async () => {
             await taskStore.updateRecord(record.id, {
               status: "running",
               startedAt: new Date().toISOString(),
-              currentStep: "Arbeidsmauren jobber...",
+              currentStep: "Jobber i bakgrunnen...",
             });
 
             try {
@@ -142,6 +186,9 @@ export function createAgentDispatcher(options) {
                 homeDir,
                 apiKey,
                 signal: controller.signal,
+                onSessionReady: (session) => {
+                  activeSessions.set(record.id, session);
+                },
                 onProgress: (step) => {
                   taskStore.updateRecord(record.id, { currentStep: step }).catch(() => {});
                   taskStore.appendEvent(record.id, step).catch(() => {});
@@ -175,43 +222,92 @@ export function createAgentDispatcher(options) {
               }
             } finally {
               activeControllers.delete(record.id);
+              activeSessions.delete(record.id);
+              notifyActiveCount();
             }
           })();
 
           return {
             status: "delegated",
             task_id: record.id,
+            active_tasks: activeControllers.size,
             message:
               "Arbeidsmauren har startet på oppgaven i bakgrunnen. Gi barnet en kort og koselig bekreftelse!",
           };
         }
 
-        case "get_task_status": {
-          const taskId = typeof args.task_id === "string" ? args.task_id.trim() : "";
-          let record = null;
-          if (taskId) {
-            record = await taskStore.getRecord(taskId);
-          } else {
-            const recent = await taskStore.listRecent(5);
-            record =
-              recent.find((r) => r.status === "running" || r.status === "queued") ||
-              recent[0] ||
-              null;
+        case "steer_task": {
+          const instruction = String(args.instruction || "").trim();
+          if (!instruction) {
+            return { status: "error", message: "Mangler instruksjon (instruction)." };
+          }
+          const requestedId = typeof args.task_id === "string" ? args.task_id.trim() : "";
+          const recent = await taskStore.listRecent(10);
+          const runningTasks = recent.filter((r) => r.status === "running");
+          const target =
+            (requestedId && runningTasks.find((r) => r.id === requestedId)) ||
+            runningTasks[0] ||
+            null;
+
+          if (!target) {
+            // Ingen aktiv oppgave kjører lenger -> start som en vanlig ny oppgave!
+            return executeTool("delegate_task", { task: instruction, notify_on_complete: true });
           }
 
-          if (!record) {
+          const session = activeSessions.get(target.id);
+          if (session && typeof session.steer === "function") {
+            await session.steer(`Tilleggsønske fra barnet mens du jobber: ${instruction}`);
+            await taskStore.appendEvent(target.id, `Styrt med tilleggsønske: ${instruction}`);
+            return {
+              status: "steered",
+              task_id: target.id,
+              message: `Sendte tilleggsønsket direkte til Arbeidsmauren på oppgave ${target.id}.`,
+            };
+          }
+
+          return executeTool("delegate_task", { task: instruction, notify_on_complete: true });
+        }
+
+        case "get_task_status": {
+          const taskId = typeof args.task_id === "string" ? args.task_id.trim() : "";
+          if (taskId) {
+            const record = await taskStore.getRecord(taskId);
+            if (!record) {
+              return { status: "not_found", message: `Fant ikke oppgave ${taskId}.` };
+            }
+            return {
+              status: record.status,
+              task_id: record.id,
+              task: record.task,
+              current_step: record.currentStep || "Jobber i bakgrunnen",
+              result_summary: record.resultSummary || null,
+            };
+          }
+
+          const recent = await taskStore.listRecent(6);
+          const active = recent.filter((r) => r.status === "running" || r.status === "queued");
+          if (active.length === 0 && recent.length === 0) {
             return {
               status: "idle",
+              active_count: 0,
               message: "Arbeidsmauren har ingen aktive oppgaver akkurat nå.",
             };
           }
 
           return {
-            status: record.status,
-            task_id: record.id,
-            task: record.task,
-            current_step: record.currentStep || "Jobber med saken",
-            result_summary: record.resultSummary || null,
+            status: active.length > 0 ? "running" : recent[0].status,
+            active_count: active.length,
+            task_id: (active[0] || recent[0]).id,
+            task: (active[0] || recent[0]).task,
+            current_step: (active[0] || recent[0]).currentStep || "Jobber i bakgrunnen",
+            result_summary: (active[0] || recent[0]).resultSummary || null,
+            tasks: recent.map((r) => ({
+              task_id: r.id,
+              status: r.status,
+              task: r.task,
+              current_step: r.currentStep,
+              result_summary: r.resultSummary || null,
+            })),
           };
         }
 
@@ -221,7 +317,7 @@ export function createAgentDispatcher(options) {
           if (taskId) {
             active = await taskStore.getRecord(taskId);
           } else {
-            const recent = await taskStore.listRecent(5);
+            const recent = await taskStore.listRecent(10);
             active = recent.find((r) => r.status === "running" || r.status === "queued") || null;
           }
 
@@ -236,6 +332,8 @@ export function createAgentDispatcher(options) {
           if (controller) {
             controller.abort();
             activeControllers.delete(active.id);
+            activeSessions.delete(active.id);
+            notifyActiveCount();
           }
           await taskStore.updateRecord(active.id, {
             status: "cancelled",
@@ -257,23 +355,29 @@ export function createAgentDispatcher(options) {
           };
         }
 
-        default:
+        case "end_conversation": {
+          if (onEndConversation) {
+            onEndConversation();
+          }
           return {
-            status: "error",
-            message: `Ukjent verktøy: ${name}`,
+            status: "ending",
+            message:
+              "Samtalen avsluttes og mikrofonen skrus av så snart du har sagt en kort og varm avskjed.",
           };
+        }
+
+        default:
+          return { status: "error", message: `Ukjent verktøy: ${name}` };
       }
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      return {
-        status: "error",
-        message: `Feil ved kjøring av ${name}: ${errorMsg}`,
-      };
+      const errMsg = err instanceof Error ? err.message : String(err);
+      return { status: "error", message: errMsg };
     }
   }
 
   return {
     executeTool,
     taskStore,
+    getActiveCount: () => activeControllers.size,
   };
 }

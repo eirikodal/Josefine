@@ -185,6 +185,63 @@ test("createReflectionManager logger samtale og kjører stille refleksjon via Ar
   }
 });
 
+test("createAgentDispatcher støtter steer_task på kjørende oppgave, parallelle oppgaver og end_conversation", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "josefine-steer-"));
+  try {
+    const taskStore = new TaskStore(tmpDir);
+    /** @type {string[]} */
+    const steeredMessages = [];
+    /** @type {number[]} */
+    const activeCounts = [];
+    let endedConversation = false;
+
+    const dispatcher = createAgentDispatcher({
+      repoDir: REPO_DIR,
+      homeDir: tmpDir,
+      taskStore,
+      onActiveCountChange: (count) => activeCounts.push(count),
+      onEndConversation: () => {
+        endedConversation = true;
+      },
+      workerRunner: async ({ task, onSessionReady }) => {
+        if (onSessionReady) {
+          onSessionReady({
+            steer: async (msg) => {
+              steeredMessages.push(msg);
+            },
+          });
+        }
+        await new Promise((r) => setTimeout(r, 50));
+        return { summary: `Ferdig med: ${task}` };
+      },
+    });
+
+    const t1 = await dispatcher.executeTool("delegate_task", { task: "Lag hunde-nettside" });
+    const t2 = await dispatcher.executeTool("delegate_task", { task: "Spill musikk" });
+    assert.equal(dispatcher.getActiveCount(), 2);
+
+    const steerRes = await dispatcher.executeTool("steer_task", {
+      task_id: t1.task_id,
+      instruction: "Ta med en mops også!",
+    });
+    assert.equal(steerRes.status, "steered");
+    assert.equal(steeredMessages.length, 1);
+    assert.match(steeredMessages[0], /Ta med en mops også!/);
+
+    const endRes = await dispatcher.executeTool("end_conversation", {});
+    assert.equal(endRes.status, "ending");
+    assert.equal(endedConversation, true);
+
+    await new Promise((r) => setTimeout(r, 80));
+    assert.equal(dispatcher.getActiveCount(), 0);
+    assert.ok(activeCounts.includes(2));
+    assert.equal(activeCounts.at(-1), 0);
+    assert.ok(t2.task_id);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test("isNightSleepTime er true mellom 20:00 og 06:30 og false på dagtid", () => {
   assert.equal(isNightSleepTime(new Date("2026-04-20T20:15:00")), true);
   assert.equal(isNightSleepTime(new Date("2026-04-20T05:45:00")), true);

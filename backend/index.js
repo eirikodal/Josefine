@@ -93,6 +93,9 @@ async function main() {
   let isConnectingGemini = false;
   let isShuttingDown = false;
   let echoGuardUntil = 0;
+  let lastUserSpeechAt = 0;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let deferredReportTimer = null;
 
   let recordedBytes = 0;
   let nonZeroBytes = 0;
@@ -152,6 +155,17 @@ async function main() {
       return false;
     }
     if (!gemini.isReady) return false;
+    // Ikke avbryt barnet midt i en setning – vent til det har vært stille i minst 2.5 sekunder
+    const sinceSpeech = Date.now() - lastUserSpeechAt;
+    if (currentState === "listening" && sinceSpeech < 2500) {
+      if (!deferredReportTimer) {
+        deferredReportTimer = setTimeout(() => {
+          deferredReportTimer = null;
+          flushNextWorkerReportIfReady();
+        }, 2500 - sinceSpeech + 100);
+      }
+      return false;
+    }
     const report = pendingWorkerReports.shift();
     if (!report) return false;
     debug(`Sender rapport fra Arbeidsmauren til Gemini Live: ${report}`);
@@ -290,14 +304,22 @@ async function main() {
     repoDir: REPO_DIR,
     homeDir: HOME_DIR,
     apiKey,
+    onActiveCountChange: (count) => {
+      emitIpc({
+        type: "worker",
+        active: count > 0,
+        count,
+      });
+    },
+    onEndConversation: () => {
+      debug("end_conversation kalt av Josefine – stopper mikrofon og går til idle etter svar.");
+      conversationActive = false;
+      clearConversationIdleTimer();
+      recorder.stop();
+      gemini.endAudioStream();
+    },
     onProgress: (_taskId, step) => {
       debug(`Arbeidsmauren fremdrift: ${step}`);
-      if (currentState === "idle" || currentState === "listening") {
-        emitIpc({
-          type: "status",
-          message: `🐜 Arbeidsmauren: ${step}`,
-        });
-      }
     },
     onTaskCompleted: (record) => {
       debug(`Arbeidsmauren ferdig med ${record.id} (status=${record.status})`);
@@ -359,6 +381,7 @@ async function main() {
     const outboundChunk = muteForEcho ? Buffer.alloc(chunk.length) : chunk;
 
     if (!muteForEcho && peak >= 950 && currentState === "listening") {
+      lastUserSpeechAt = Date.now();
       resetConversationIdleTimer();
     }
 
@@ -388,6 +411,7 @@ async function main() {
 
   gemini.on("inputTranscript", (text) => {
     inputTranscript += text;
+    lastUserSpeechAt = Date.now();
     debug(`Gemini hørte: ${inputTranscript}`);
     resetConversationIdleTimer();
     emitIpc({ type: "transcript", role: "user", text: `Du sa: ${inputTranscript}` });
@@ -441,13 +465,7 @@ async function main() {
     activeToolCalls++;
     awaitingModelTurnComplete = true;
     clearConversationIdleTimer();
-    emitIpc({
-      type: "status",
-      message:
-        toolCall.name === "delegate_task"
-          ? "🐜 Setter Arbeidsmauren på saken..."
-          : `🌸 Utfører: ${toolCall.name}...`,
-    });
+    // La samtaleteksten stå i fred; UI viser egen "Jobber i bakgrunnen"-indikator
     try {
       const result = await dispatcher.executeTool(toolCall.name, toolCall.args);
       gemini.sendToolResponse(toolCall.id, toolCall.name, result);

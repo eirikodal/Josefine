@@ -452,7 +452,7 @@ PanelWindow {
                 visible: !root.onboardingRequired
                 Layout.alignment: Qt.AlignHCenter
                 Layout.preferredWidth: 330
-                Layout.preferredHeight: 300
+                Layout.preferredHeight: 330
                 Layout.bottomMargin: 6
                 centerColor: root.stateConfig.auraColorCenter
                 outerColor: root.stateConfig.auraColorOuter
